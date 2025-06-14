@@ -1,3 +1,4 @@
+#
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 # INSTAGRAM SECURITY GATEWAY v10.2
